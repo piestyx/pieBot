@@ -1,0 +1,3 @@
+[submodule "vendor/gsama"]
+	path = vendor/gsama
+	url = git@github-clyptix:clyptix-media/gsama.git

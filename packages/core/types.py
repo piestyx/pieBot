@@ -23,6 +23,13 @@ class TaskRequest:
     metadata: Dict[str, Any] = field(default_factory=dict)
 
 @dataclass(frozen=True)
+class ToolPlan:
+    run_id: RunId
+    agent_type: AgentType
+    tool_calls: List[ToolCall] = field(default_factory=list)
+    note: Optional[str] = None
+
+@dataclass(frozen=True)
 class ToolCall:
     run_id: RunId
     tool_name: str
@@ -35,6 +42,13 @@ class ToolResult:
     call_id: str
     ok: bool
     result: Dict[str, Any] = field(default_factory=dict)
+    error: Optional[str] = None
+
+@dataclass(frozen=True)
+class RunResult:
+    run_id: RunId
+    ok: bool
+    tool_results: List[ToolResult] = field(default_factory=list)
     error: Optional[str] = None
 
 @dataclass(frozen=True)
@@ -78,3 +92,9 @@ class AuditEvent:
     payload: Dict[str, Any]
     prev_hash: Optional[str] = None
     hash: Optional[str] = None
+
+@dataclass(frozen=True)
+class ObservationEvent:
+    run_id: RunId
+    kind: str  # e.g. "text", "file"
+    data: Dict[str, Any] = field(default_factory=dict)

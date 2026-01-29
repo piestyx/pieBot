@@ -5,7 +5,7 @@
 ## with a brief description provided in comments above each target. 
 ## ----------------------------------------------------------------------
 
-.PHONY: fold test setup init-gsama check
+.PHONY: fold test setup init-gsama check clean-pycache
 
 fold:       ## Folds comments to 70 char rows
 	fold -s -w 70 input.txt
@@ -25,3 +25,9 @@ init-gsama: ## Initialize GSAMA state
 
 check:      ## Run repository checks
 	python3 scripts/ci/check_repo.py
+
+clean-pycache:
+	@find . \
+		-type d \( -name "__pycache__" -o -name ".pytest_cache" -o -name ".mypy_cache" -o -name ".ruff_cache" \) \
+		-prune -exec rm -rf {} + 2>/dev/null || true
+	@find . -type f \( -name "*.pyc" -o -name "*.pyo" \) -delete 2>/dev/null || true

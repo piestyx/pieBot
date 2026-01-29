@@ -1,5 +1,5 @@
 """
-Docstring for packages.core.codec
+SHA-256 hashing and canonical JSON serialization utilities.
 """
 
 from __future__ import annotations

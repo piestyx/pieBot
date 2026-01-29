@@ -1,5 +1,8 @@
 """
-Docstring for packages.memory.gsama_adapter.adapter
+GSAMA adapter boundary and persistence for pieBot.
+Contract:
+    - No other pieBot module imports GSAMA internals directly.
+    - Persisted state lives under runtime/state/.
 """
 
 from __future__ import annotations

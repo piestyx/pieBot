@@ -1,5 +1,5 @@
 """
-Docstring for packages.core.types
+Data types used throughout the system.
 """
 
 from __future__ import annotations

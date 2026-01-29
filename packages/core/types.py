@@ -82,6 +82,7 @@ AuditEventType = Literal[
     "StateDeltaApplied",
     "RunCompleted",
     "RunFailed",
+    "CriticReport",
 ]
 
 @dataclass(frozen=True)
@@ -98,3 +99,15 @@ class ObservationEvent:
     run_id: RunId
     kind: str  # e.g. "text", "file"
     data: Dict[str, Any] = field(default_factory=dict)
+
+class CriticDecision(str, Enum):
+    passed = "passed"
+    retry = "retry"
+    failed = "failed"
+
+@dataclass(frozen=True)
+class CriticReport:
+    run_id: RunId
+    decision: CriticDecision
+    reason: str
+    retry_hint: Dict[str, Any] = field(default_factory=dict)

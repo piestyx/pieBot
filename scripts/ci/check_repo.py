@@ -31,6 +31,10 @@ SECRET_PATTERNS = [
     re.compile(r"(?i)BEGIN\s+PRIVATE\s+KEY"),
 ]
 
+SKIP_PUBLIC_BIND_SCAN = {
+    "scripts/ci/check_repo.py",
+}
+
 PUBLIC_BIND_PATTERNS = [
     re.compile(r"0\.0\.0\.0"),
     re.compile(r"\[::\]"),
@@ -86,16 +90,22 @@ def check_no_secrets() -> None:
 def check_no_public_bind_defaults() -> None:
     offenders: list[str] = []
     for p in iter_repo_text_files():
+        rel = str(p.relative_to(ROOT))
+        if rel in SKIP_PUBLIC_BIND_SCAN:
+            continue
         try:
             text = p.read_text(encoding="utf-8", errors="ignore")
         except Exception:
             continue
         for pat in PUBLIC_BIND_PATTERNS:
             if pat.search(text):
-                offenders.append(str(p.relative_to(ROOT)))
+                offenders.append(rel)
                 break
     if offenders:
-        fail(f"Public bind patterns found (0.0.0.0 / ::). Default must be localhost-only. Files: {sorted(set(offenders))}")
+        fail(
+            "Public bind patterns found (0.0.0.0 / ::). Default must be localhost-only. "
+            f"Files: {sorted(set(offenders))}"
+        )
 
 def check_gsama_pinned_to_tag() -> None:
     # Enforce: vendor/gsama is a submodule AND the current commit is exactly at a tag.

@@ -14,17 +14,28 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          submodules: true
+          submodules: recursive
+          ssh-key: ${{ secrets.GSAMA_DEPLOY_KEY }}
+
+      - name: Fetch tags (needed for gsama tag pin check)
+        run: |
+          git fetch --tags --force
+          git -C vendor/gsama fetch --tags --force
+
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
+
       - name: Install deps
         run: |
           python -m pip install --upgrade pip
           pip install pytest
+
       - name: Setup runtime
         run: make setup
+
       - name: Repo checks
         run: make check
+
       - name: Tests
         run: make test

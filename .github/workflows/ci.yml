@@ -1,0 +1,30 @@
+# GitHub Actions CI configuration file for pieBot project
+# This workflow runs on push and pull request events,
+# setting up Python 3.12 environment, installing dependencies,
+# performing repository checks, and executing tests.
+
+name: ci
+on:
+  push:
+  pull_request:
+
+jobs:
+  checks:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: true
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install deps
+        run: |
+          python -m pip install --upgrade pip
+          pip install pytest
+      - name: Setup runtime
+        run: make setup
+      - name: Repo checks
+        run: make check
+      - name: Tests
+        run: make test

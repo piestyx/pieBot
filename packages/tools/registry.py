@@ -14,7 +14,7 @@ import uuid
 from packages.core.types import ToolCall, ToolResult
 from packages.policy.engine import PolicyEngine, RiskClass
 from packages.core.audit import AuditWriter
-
+from packages.tools.approval import is_approved
 
 ToolHandler = Callable[[Dict[str, Any], "ToolContext"], Dict[str, Any]]
 
@@ -89,8 +89,18 @@ class ToolRegistry:
         )
 
         if not decision.allow:
-            self._audit.append(run_id, "ToolExecuted", {"tool_name": tool_name, "call_id": call_id, "args": args, "blocked": True})
-            res = ToolResult(run_id=run_id, call_id=call_id, ok=False, result={}, error=f"blocked by policy: {decision.reason}")
+            self._audit.append(
+                run_id,
+                "ToolExecuted",
+                {"tool_name": tool_name, "call_id": call_id, "args": args, "blocked": True},
+            )
+            res = ToolResult(
+                run_id=run_id,
+                call_id=call_id,
+                ok=False,
+                result={},
+                error=f"blocked by policy: {decision.reason}",
+            )
             self._audit.append(
                 run_id,
                 "ToolResultStored",
@@ -98,21 +108,51 @@ class ToolRegistry:
             )
             return res
 
-        # Note: for Stage 4A all tools are READ class, so requires_approval is false.
-        # Later stages will insert approval gating here.
+        # 4B: enforce approval gate for any tool requiring approval.
+        if decision.requires_approval:
+            tok = args.get("approval_token")
+            approved = is_approved(tok if isinstance(tok, str) else None)
 
-        self._audit.append(run_id, "ToolExecuted", {"tool_name": tool_name, "call_id": call_id, "args": args})
+            # Log approval gate result (minimal for now)
+            self._audit.append(
+                run_id,
+                "ApprovalRequested",
+                {"tool_name": tool_name, "call_id": call_id, "approved": approved},
+            )
+
+            if not approved:
+                res = ToolResult(
+                    run_id=run_id,
+                    call_id=call_id,
+                    ok=False,
+                    result={},
+                    error="approval required",
+                )
+                self._audit.append(
+                    run_id,
+                    "ToolResultStored",
+                    {"tool_name": tool_name, "call_id": call_id, "ok": False, "error": res.error},
+                )
+                return res
+
+        self._audit.append(
+            run_id,
+            "ToolExecuted",
+            {"tool_name": tool_name, "call_id": call_id, "args": args},
+        )
 
         try:
             out = spec.handler(args, self._ctx)
             res = ToolResult(run_id=run_id, call_id=call_id, ok=True, result=out, error=None)
         except Exception as e:
             tb = traceback.format_exc(limit=3)
-            res = ToolResult(run_id=run_id, call_id=call_id, ok=False, result={}, error=f"{e.__class__.__name__}: {e}")
-            # Keep trace available in structured result for debugging, but it is still audited/redacted upstream.
-            out = {"traceback": tb}
-            if res.ok:
-                res = ToolResult(run_id=run_id, call_id=call_id, ok=False, result=out, error=res.error)
+            res = ToolResult(
+                run_id=run_id,
+                call_id=call_id,
+                ok=False,
+                result={"traceback": tb},
+                error=f"{e.__class__.__name__}: {e}",
+            )
 
         self._audit.append(
             run_id,
@@ -126,3 +166,4 @@ class ToolRegistry:
             },
         )
         return res
+

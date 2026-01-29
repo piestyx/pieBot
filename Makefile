@@ -5,16 +5,23 @@
 ## with a brief description provided in comments above each target. 
 ## ----------------------------------------------------------------------
 
-.PHONY: setup check test
+.PHONY: fold test setup init-gsama check
 
-help:   ## Show this help message
+fold:       ## Folds comments to 70 char rows
+	fold -s -w 70 input.txt
+
+help:       ## Show this help message
 	@sed -ne '/@sed/!s/## //p' $(MAKEFILE_LIST)
 
-setup:  ## Set up runtime environment
-	python3 scripts/setup_runtime.py
-
-check:  ## Run repository checks
-	python3 scripts/ci/check_repo.py
-
-test:   ## Run the test suite
+test:       ## Run the test suite
 	pytest -q tests
+
+setup:      ## Set up runtime environment
+	python3 scripts/setup_runtime.py
+	python3 scripts/init_gsama_state.py
+
+init-gsama: ## Initialize GSAMA state
+	python3 scripts/init_gsama_state.py
+
+check:      ## Run repository checks
+	python3 scripts/ci/check_repo.py

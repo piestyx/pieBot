@@ -11,10 +11,12 @@ from typing import Any, Callable, Dict, Optional
 import traceback
 import uuid
 
-from packages.core.types import ToolCall, ToolResult
+from packages.core.types import ToolResult
 from packages.policy.engine import PolicyEngine, RiskClass
 from packages.core.audit import AuditWriter
 from packages.tools.approval import is_approved
+from packages.tools.store import store_tool_result
+
 
 ToolHandler = Callable[[Dict[str, Any], "ToolContext"], Dict[str, Any]]
 
@@ -70,7 +72,32 @@ class ToolRegistry:
         if spec is None:
             self._audit.append(run_id, "ToolExecuted", {"tool_name": tool_name, "call_id": call_id, "args": args})
             res = ToolResult(run_id=run_id, call_id=call_id, ok=False, result={}, error="unknown tool")
-            self._audit.append(run_id, "ToolResultStored", {"tool_name": tool_name, "call_id": call_id, "ok": False, "error": "unknown tool"})
+
+            artifact = store_tool_result(
+                self._ctx.runtime_root,
+                call_id,
+                {
+                    "run_id": run_id,
+                    "tool_name": tool_name,
+                    "call_id": call_id,
+                    "ok": res.ok,
+                    "error": res.error,
+                    "result": res.result,
+                },
+            )
+            self._audit.append(
+                run_id,
+                "ToolResultStored",
+                {
+                    "tool_name": tool_name,
+                    "call_id": call_id,
+                    "ok": res.ok,
+                    "error": res.error,
+                    "artifact_path": artifact["artifact_path"],
+                    "artifact_hash": artifact["artifact_hash"],
+                    "bytes": artifact["bytes"],
+                },
+            )
             return res
 
         # Policy decision (single choke point)
@@ -101,19 +128,38 @@ class ToolRegistry:
                 result={},
                 error=f"blocked by policy: {decision.reason}",
             )
+            artifact = store_tool_result(
+                self._ctx.runtime_root,
+                call_id,
+                {
+                    "run_id": run_id,
+                    "tool_name": tool_name,
+                    "call_id": call_id,
+                    "ok": res.ok,
+                    "error": res.error,
+                    "result": res.result,
+                },
+            )
             self._audit.append(
                 run_id,
                 "ToolResultStored",
-                {"tool_name": tool_name, "call_id": call_id, "ok": False, "error": res.error},
+                {
+                    "tool_name": tool_name,
+                    "call_id": call_id,
+                    "ok": res.ok,
+                    "error": res.error,
+                    "artifact_path": artifact["artifact_path"],
+                    "artifact_hash": artifact["artifact_hash"],
+                    "bytes": artifact["bytes"],
+                },
             )
             return res
 
-        # 4B: enforce approval gate for any tool requiring approval.
+        # Enforce approval gate for any tool requiring approval.
         if decision.requires_approval:
             tok = args.get("approval_token")
             approved = is_approved(tok if isinstance(tok, str) else None)
 
-            # Log approval gate result (minimal for now)
             self._audit.append(
                 run_id,
                 "ApprovalRequested",
@@ -128,10 +174,30 @@ class ToolRegistry:
                     result={},
                     error="approval required",
                 )
+                artifact = store_tool_result(
+                    self._ctx.runtime_root,
+                    call_id,
+                    {
+                        "run_id": run_id,
+                        "tool_name": tool_name,
+                        "call_id": call_id,
+                        "ok": res.ok,
+                        "error": res.error,
+                        "result": res.result,
+                    },
+                )
                 self._audit.append(
                     run_id,
                     "ToolResultStored",
-                    {"tool_name": tool_name, "call_id": call_id, "ok": False, "error": res.error},
+                    {
+                        "tool_name": tool_name,
+                        "call_id": call_id,
+                        "ok": res.ok,
+                        "error": res.error,
+                        "artifact_path": artifact["artifact_path"],
+                        "artifact_hash": artifact["artifact_hash"],
+                        "bytes": artifact["bytes"],
+                    },
                 )
                 return res
 
@@ -154,6 +220,19 @@ class ToolRegistry:
                 error=f"{e.__class__.__name__}: {e}",
             )
 
+        # Always store the full tool result as an artifact
+        artifact = store_tool_result(
+            self._ctx.runtime_root,
+            call_id,
+            {
+                "run_id": run_id,
+                "tool_name": tool_name,
+                "call_id": call_id,
+                "ok": res.ok,
+                "error": res.error,
+                "result": res.result,
+            },
+        )
         self._audit.append(
             run_id,
             "ToolResultStored",
@@ -162,7 +241,9 @@ class ToolRegistry:
                 "call_id": call_id,
                 "ok": res.ok,
                 "error": res.error,
-                "result_keys": sorted(list(res.result.keys())),
+                "artifact_path": artifact["artifact_path"],
+                "artifact_hash": artifact["artifact_hash"],
+                "bytes": artifact["bytes"],
             },
         )
         return res

@@ -1,5 +1,5 @@
 [package]
-name = "pieBot_common"
+name = "pie_common"
 version = "0.1.0"
 edition = "2021"
 

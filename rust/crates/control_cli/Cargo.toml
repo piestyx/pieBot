@@ -1,0 +1,16 @@
+[package]
+name = "pie_control_cli"
+version = "0.1.0"
+edition = "2021"
+
+[[bin]]
+name = "pie-control"
+path = "src/main.rs"
+
+[dependencies]
+clap = { version = "4", features = ["derive"] }
+serde_json = "1"
+thiserror = "1"
+
+pie_redaction = { path = "../redaction" }
+pie_audit_log = { path = "../audit_log" }

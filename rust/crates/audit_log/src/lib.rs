@@ -5,8 +5,8 @@
 //! - Hash is computed over canonical JSON of (event + prev_hash)
 //! - Verifier replays and checks integrity end-to-end
 
-use pieBot_audit_spec::AuditEvent;
-use pieBot_common::sha256_canonical_json;
+use pie_audit_spec::AuditEvent;
+use pie_common::sha256_canonical_json;
 use serde::{Deserialize, Serialize};
 use std::fs::{File, OpenOptions};
 use std::io::{BufRead, BufReader, Write};
@@ -20,7 +20,7 @@ pub enum AuditLogError {
     #[error("json error: {0}")]
     Json(#[from] serde_json::Error),
     #[error("canonical json error: {0}")]
-    Canon(#[from] pieBot_common::CanonError),
+    Canon(#[from] pie_common::CanonError),
     #[error("hash mismatch at line {line}: expected {expected}, got {got}")]
     HashMismatch { line: usize, expected: String, got: String },
 }
@@ -113,7 +113,7 @@ pub fn verify_log(path: impl AsRef<Path>) -> Result<String, AuditLogError> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use pieBot_audit_spec::*;
+    use pie_audit_spec::*;
     use std::fs;
 
     #[test]

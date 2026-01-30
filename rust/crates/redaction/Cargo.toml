@@ -1,9 +1,13 @@
 [package]
-name = "pie_audit_spec"
+name = "pie_redaction"
 version = "0.1.0"
 edition = "2021"
 
 [dependencies]
 serde = { version = "1", features = ["derive"] }
+serde_json = "1"
 uuid = { version = "1", features = ["serde", "v4"] }
+thiserror = "1"
 pie_common = { path = "../common" }
+pie_audit_spec = { path = "../audit_spec" }
+pie_audit_log = { path = "../audit_log" }

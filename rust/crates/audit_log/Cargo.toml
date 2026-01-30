@@ -1,5 +1,5 @@
 [package]
-name = "pieBot_audit_log"
+name = "pie_audit_log"
 version = "0.1.0"
 edition = "2021"
 

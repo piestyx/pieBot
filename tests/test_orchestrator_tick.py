@@ -9,6 +9,7 @@ from pathlib import Path
 
 from apps.server.audit import get_audit_writer
 from apps.server.models.null_model import NullModel
+from packages.models import ModelRouter
 from apps.server.orchestrator import Orchestrator
 
 from packages.core.audit import verify_audit_log
@@ -33,8 +34,23 @@ def test_orchestrator_tick_audited_and_replayable(tmp_path: Path):
     tools = ToolRegistry(policy=policy, audit=audit, repo_root=repo, runtime_root=runtime)
     tools.register(fs_read_file_spec)
 
-    model = NullModel()
-    orch = Orchestrator(tools=tools, audit=audit, model=model, runtime_root=runtime)
+    cfg = tmp_path / "router.yaml"
+    cfg.write_text(
+        """
+models:
+  null:
+    kind: null
+    capabilities: []
+routing:
+  planner: null
+  executor: null
+  critic: null
+""".strip(),
+        encoding="utf-8",
+    )
+    router = ModelRouter.load(cfg)
+    orch = Orchestrator(tools=tools, audit=audit, router=router, runtime_root=runtime)
+
 
     run_id = uuid.uuid4().hex
     obs = ObservationEvent(run_id=run_id, kind="file_read", data={"path": "hello.txt"})

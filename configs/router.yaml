@@ -1,0 +1,15 @@
+# This configuration file defines the routing of various AI model 
+# components used in the pieBot application. Each component can be 
+# assigned a specific model or set to 'null' to indicate no model is 
+# assigned.
+
+models:
+  "null":
+    kind: "null"
+    capabilities: []
+
+routing:
+  planner: "null"
+  executor: "null"
+  summarizer: "null"
+  critic: "null"

@@ -1,5 +1,6 @@
 """
-Stage 5B orchestrator: planner -> executor -> critic pipeline with bounded retries.
+Stage 6A orchestrator: planner -> executor -> critic pipeline with bounded retries,
+where models are resolved by role via ModelRouter.
 Deterministic, replayable, no model calls during replay.
 """
 
@@ -11,6 +12,7 @@ from typing import List
 from packages.core.types import ObservationEvent, RunResult, ToolPlan, ToolResult, CriticDecision
 from packages.core.audit import AuditWriter
 from packages.tools.registry import ToolRegistry
+from packages.models.router import ModelRouter
 
 
 class Orchestrator:
@@ -19,13 +21,13 @@ class Orchestrator:
         *,
         tools: ToolRegistry,
         audit: AuditWriter,
-        model,  # NullModel for now
+        router: ModelRouter,
         runtime_root: Path,
         max_attempts: int = 2,
     ) -> None:
         self._tools = tools
         self._audit = audit
-        self._model = model
+        self._router = router
         self._runtime_root = runtime_root
         self._max_attempts = max_attempts
 
@@ -54,12 +56,15 @@ class Orchestrator:
 
         for attempt in range(1, self._max_attempts + 1):
             try:
+                planner = self._router.get_backend_for_role("planner")
+                executor = self._router.get_backend_for_role("executor")
+                critic = self._router.get_backend_for_role("critic")
                 # PLANNER
-                plan: ToolPlan = self._model.plan(observation)
+                plan: ToolPlan = planner.plan(observation)
                 self._audit_plan(run_id, plan, attempt)
 
                 # EXECUTOR (may transform plan)
-                exec_plan: ToolPlan = self._model.execute(plan)
+                exec_plan: ToolPlan = executor.execute(plan)
                 self._audit_plan(run_id, exec_plan, attempt)
 
                 # Execute tools (registry handles policy/approval/audit/artifacts)
@@ -70,7 +75,7 @@ class Orchestrator:
                     results.append(res)
 
                 # CRITIC
-                report = self._model.critique(observation, attempt_results)
+                report = critic.critique(observation, attempt_results)
                 self._audit.append(
                     run_id,
                     "CriticReport",

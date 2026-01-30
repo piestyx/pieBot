@@ -132,7 +132,7 @@ pub struct ModelCallDispatched {
     pub request_post_hash: String,    // sha256:...
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Copy, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum CallStatus {
     Ok,

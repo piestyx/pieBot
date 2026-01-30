@@ -17,3 +17,4 @@ __pycache__/
 # --- Rust ---
 /target
 **/*.rs.bk
+Cargo.lock

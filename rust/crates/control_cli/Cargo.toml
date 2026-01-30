@@ -11,6 +11,11 @@ path = "src/main.rs"
 clap = { version = "4", features = ["derive"] }
 serde_json = "1"
 thiserror = "1"
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "time"] }
+uuid = { version = "1", features = ["v4"] }
 
 pie_redaction = { path = "../redaction" }
 pie_audit_log = { path = "../audit_log" }
+pie_audit_spec = { path = "../audit_spec" }
+pie_common = { path = "../common" }
+pie_providers = { path = "../providers" }

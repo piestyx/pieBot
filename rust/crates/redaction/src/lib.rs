@@ -192,6 +192,15 @@ pub struct ArtifactBundle {
     pub transform_log_hash: String,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CallManifest {
+    pub schema_version: u8,
+    pub call_id: String,
+    pub pre_hash: String,
+    pub post_hash: String,
+    pub transform_log_hash: String,
+}
+
 #[derive(Debug, Clone)]
 pub struct RedactionResult {
     pub call_id: Uuid,
@@ -304,6 +313,23 @@ impl RedactionEngine {
         let transform_log_path = artifacts_dir.join("transform_log.json");
         let (transform_log_hash, _log_size) = write_json_artifact(&transform_log_path, &transforms)?;
 
+        // Write call manifest for ergonomic downstream dispatch
+        let manifest = CallManifest {
+            schema_version: 1,
+            call_id: call_id.to_string(),
+            pre_hash: pre_hash.clone(),
+            post_hash: post_hash.clone(),
+            transform_log_hash: transform_log_hash.clone(),
+        };
+        let _ = write_json_artifact(&artifacts_dir.join("call_manifest.json"), &manifest)?;
+
+        // 3.1) Patch integrity block in-memory (authoritative hashes)
+        // NOTE: artifacts already written above; this only corrects the returned struct and
+        // any future outbound use of the SanitizedModelRequest object.
+        let mut sanitized_fixed = sanitized.clone();
+        sanitized_fixed.integrity.pre_hash = pre_hash.clone();
+        sanitized_fixed.integrity.post_hash = post_hash.clone();
+        
         // 4) Emit audit: ModelCallPrepared
         let prepared = spec::AuditEvent::ModelCallPrepared(spec::ModelCallPrepared {
             schema_version: 1,
@@ -366,7 +392,7 @@ impl RedactionEngine {
         };
 
         // Ensure sanitized includes the derived context_refs (deterministically)
-        let mut sanitized_out = sanitized;
+        let mut sanitized_out = sanitized_fixed;
         sanitized_out.context_refs = context_refs;
 
         Ok(RedactionResult {

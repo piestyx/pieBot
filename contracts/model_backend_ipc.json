@@ -1,0 +1,62 @@
+{
+  "schema_version": 1,
+  "purpose": "Rust control-plane to Python worker-plane IPC contract for model backend calls.",
+  "principles": [
+    "Python must never receive pre-redaction requests.",
+    "Python must never receive memory contents (GSAMA/working/openmemory).",
+    "Python must never emit audit events.",
+    "Rust is the only authority for hashing, redaction, policy, audit, and replay."
+  ],
+  "request": {
+    "type": "SanitizedModelRequestEnvelope",
+    "fields": {
+      "provider": "string",
+      "model": "string",
+      "prompt": {
+        "format": "chat",
+        "messages": [
+          { "role": "system|user|assistant", "content": "string" }
+        ],
+        "max_output_tokens": "integer",
+        "temperature": "number",
+        "top_p": "number",
+        "stop": ["string"]
+      },
+      "integrity": {
+        "request_post_hash": "sha256:...",
+        "nonce": "string"
+      }
+    },
+    "explicitly_forbidden_fields": [
+      "run_id",
+      "tick_id",
+      "context_refs",
+      "redaction.transform_log",
+      "pre_hash",
+      "artifact_paths",
+      "secrets",
+      "gsama",
+      "working_memory",
+      "openmemory",
+      "tool_results",
+      "diff_content"
+    ]
+  },
+  "response": {
+    "type": "ModelBackendResponseEnvelope",
+    "fields": {
+      "status": "ok|error|timeout|rate_limited",
+      "latency_ms": "integer",
+      "provider_request_id": "string (raw; Rust will hash before audit)",
+      "raw_response": "object (provider-native JSON)",
+      "normalized_reply": {
+        "content": "string",
+        "finish_reason": "string",
+        "usage": {
+          "input_tokens": "integer",
+          "output_tokens": "integer"
+        }
+      }
+    }
+  }
+}

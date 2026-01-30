@@ -1,0 +1,174 @@
+//! pieBot_audit_spec
+//!
+//! Strongly-typed audit events for provider + redaction pipeline.
+//! Mirrors Stage 6B event requirements:
+//! - ModelCallPrepared
+//! - ModelRequestRedacted
+//! - ModelCallDispatched
+//! - ModelCallCompleted
+
+use serde::{Deserialize, Serialize};
+use uuid::Uuid;
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RunId(pub String);
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TickId(pub u64);
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CallId(pub Uuid);
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum AgentRole {
+    Planner,
+    Executor,
+    Critic,
+    Summarizer,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum RiskClass {
+    Read,
+    Write,
+    Exec,
+    Network,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Actor {
+    pub subsystem: String, // "models"
+    pub backend: String,   // "openai" etc
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct IntegrityPre {
+    pub request_pre_hash: String, // sha256:...
+    pub request_pre_size_bytes: u64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct IntegrityRedacted {
+    pub request_pre_hash: String,
+    pub request_post_hash: String,
+    pub request_post_size_bytes: u64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PolicyMeta {
+    pub decision_id: String,
+    pub risk_class: RiskClass,
+    pub requires_approval: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ModelCallMeta {
+    pub call_id: CallId,
+    pub role: AgentRole,
+    pub provider: String,
+    pub model: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ArtifactRef {
+    pub r#type: String, // "artifact_ref"
+    pub hash: String,   // sha256:...
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ModelCallPrepared {
+    pub schema_version: u8,
+    pub run_id: RunId,
+    pub tick_id: TickId,
+    pub ts: f64,
+    pub actor: Actor,
+    pub model_call: ModelCallMeta,
+    pub integrity: IntegrityPre,
+    pub policy: PolicyMeta,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RedactionMeta {
+    pub profile: String,              // "strict" etc
+    pub transform_count: u64,
+    pub transform_log_hash: String,   // sha256:...
+    pub summary_budget_chars: u64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ModelRequestRedacted {
+    pub schema_version: u8,
+    pub run_id: RunId,
+    pub tick_id: TickId,
+    pub ts: f64,
+    pub model_call: CallId,
+    pub redaction: RedactionMeta,
+    pub integrity: IntegrityRedacted,
+    pub artifacts: RedactionArtifacts,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RedactionArtifacts {
+    pub pre_request_artifact: ArtifactRef,
+    pub post_request_artifact: ArtifactRef,
+    pub transform_log_artifact: ArtifactRef,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ModelCallDispatched {
+    pub schema_version: u8,
+    pub run_id: RunId,
+    pub tick_id: TickId,
+    pub ts: f64,
+    pub model_call: CallId,
+    pub provider: String,
+    pub model: String,
+    pub endpoint_fingerprint: String, // sha256:...
+    pub request_post_hash: String,    // sha256:...
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum CallStatus {
+    Ok,
+    Error,
+    Timeout,
+    RateLimited,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ModelCallResult {
+    pub status: CallStatus,
+    pub latency_ms: u64,
+    pub provider_request_id_hash: String,
+    pub response_hash: String,
+    pub response_size_bytes: u64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ModelCallCompleted {
+    pub schema_version: u8,
+    pub run_id: RunId,
+    pub tick_id: TickId,
+    pub ts: f64,
+    pub model_call: CallId,
+    pub result: ModelCallResult,
+    pub artifacts: CompletionArtifacts,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CompletionArtifacts {
+    pub response_artifact: ArtifactRef,
+    pub normalized_reply_artifact: ArtifactRef,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(tag = "event_type")]
+pub enum AuditEvent {
+    ModelCallPrepared(ModelCallPrepared),
+    ModelRequestRedacted(ModelRequestRedacted),
+    ModelCallDispatched(ModelCallDispatched),
+    ModelCallCompleted(ModelCallCompleted),
+}

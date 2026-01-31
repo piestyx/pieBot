@@ -1,12 +1,14 @@
 use clap::{Parser, Subcommand};
 use dotenvy::from_path as dotenv_from_path;
 use serde_json::json;
+use serde_json::Value as JsonValue;
 use pie_audit_log::{verify_log, AuditAppender};
 use pie_common::sha256_bytes;
 use pie_redaction::{ModelRequest, RedactionEngine, RedactionProfile, SanitizedModelRequest, CallManifest};
 use pie_audit_spec as spec;
 use pie_providers::{OpenAICompatProvider, Provider};
 use pie_episodes as episodes;
+use pie_openmemory_mirror as om;
 use std::time::Instant;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -29,6 +31,8 @@ enum CliError {
     Provider(#[from] pie_providers::ProviderError),
     #[error("episodes error: {0}")]
     Episodes(#[from] episodes::EpisodeError),
+    #[error("openmemory error: {0}")]
+    OpenMemory(#[from] om::OpenMemoryError),    
 }
 
 #[derive(Parser)]
@@ -155,11 +159,11 @@ enum Command {
         audit_log: PathBuf,
 
         /// Provider base URL (e.g. http://localhost:8000 or https://api.openai.com)
-        /// Can be supplied via env PIEBOT_PROVIDER_BASE_URL.
+        /// Can be supplied via env OPENAI_BASE_URL.
         #[arg(long)]
         base_url: Option<String>,
 
-        /// API key (optional). Can be supplied via env PIEBOT_PROVIDER_API_KEY.
+        /// API key (optional). Can be supplied via env OPENAI_API_KEY.
         #[arg(long)]
         api_key: Option<String>,
 
@@ -245,6 +249,38 @@ enum Command {
     VerifyAudit {
         #[arg(long)]
         audit_log: PathBuf,
+    },
+
+    /// Mirror a locally-stored episode into OpenMemory (best-effort, non-authoritative).
+    ///
+    /// This does NOT affect deterministic replay. It only emits audit events describing the attempt/result.
+    EpisodeMirror {
+        #[arg(long)]
+        repo_root: PathBuf,
+
+        #[arg(long)]
+        episode_id: String,
+
+        #[arg(long)]
+        audit_log: PathBuf,
+
+        /// OpenMemory base URL (default matches local backend dev server).
+        #[arg(long, default_value = "http://127.0.0.1:8080")]
+        base_url: String,
+
+        /// Optional OpenMemory API key. If omitted, reads OPENMEMORY_API_KEY env var.
+        #[arg(long)]
+        api_key: Option<String>,
+
+        /// Optional OpenMemory user_id (for multi-user isolation). Defaults to thread_id if omitted.
+        #[arg(long)]
+        user_id: Option<String>,
+
+        #[arg(long, default_value_t = 2000)]
+        timeout_ms: u64,
+
+        #[arg(long, default_value_t = 0.0)]
+        ts: f64,
     },
 }
 
@@ -475,16 +511,16 @@ async fn run() -> Result<(), CliError> {
             // Delegate to Dispatch logic by reusing the same code path:
             // We just reconstruct args inline.
             let base_url = base_url
-                .or_else(|| std::env::var("PIEBOT_PROVIDER_BASE_URL").ok())
+                .or_else(|| std::env::var("OPENAI_BASE_URL").ok())
                 .unwrap_or_else(|| "https://api.openai.com".to_string());
-            let api_key = api_key.or_else(|| std::env::var("PIEBOT_PROVIDER_API_KEY").ok());
+            let api_key = api_key.or_else(|| std::env::var("OPENAI_API_KEY").ok());
 
             // Helpful guardrail: if you're pointing at OpenAI and no API key is set, fail loudly.
             if api_key.as_deref().unwrap_or("").is_empty()
                 && base_url.contains("api.openai.com")
             {
                 return Err(CliError::Provider(pie_providers::ProviderError::InvalidResponse(
-                    "PIEBOT_PROVIDER_API_KEY is required for https://api.openai.com (set it in .env or env var)".into(),
+                    "OPENAI_API_KEY is required for https://api.openai.com (set it in .env or env var)".into(),
                 )));
             }
 
@@ -587,9 +623,9 @@ async fn run() -> Result<(), CliError> {
             ensure_runtime_dirs(&repo_root)?;
 
             let base_url = base_url
-                .or_else(|| std::env::var("PIEBOT_PROVIDER_BASE_URL").ok())
+                .or_else(|| std::env::var("OPENAI_BASE_URL").ok())
                 .unwrap_or_else(|| "https://api.openai.com".to_string());
-            let api_key = api_key.or_else(|| std::env::var("PIEBOT_PROVIDER_API_KEY").ok());
+            let api_key = api_key.or_else(|| std::env::var("OPENAI_API_KEY").ok());
 
 
             let bytes = fs::read(&sanitized_json)?;
@@ -697,6 +733,136 @@ async fn run() -> Result<(), CliError> {
             );
             Ok(())
         }
+
+        Command::EpisodeMirror { repo_root, episode_id, audit_log, base_url, api_key, user_id, timeout_ms, ts } => {            // Load .env exactly like other commands (local-only convenience)
+            let repo_env = repo_root.join(".env");
+            if repo_env.exists() {
+                let _ = dotenv_from_path(&repo_env);
+                eprintln!("loaded env from {}", repo_env.display());
+            } else if Path::new(".env").exists() {
+                let _ = dotenv_from_path(".env");
+                eprintln!("loaded env from ./.env");
+            }
+
+            let store = episodes::EpisodeStore::new(repo_root);
+            let idx = store.load_index()?;
+
+            let uid = Uuid::parse_str(&episode_id)
+                .map_err(|_| CliError::Episodes(episodes::EpisodeError::Corrupt("invalid episode_id".into())))?;
+
+            let entry = idx.entries.iter()
+                .find(|e| e.episode_id == uid)
+                .ok_or_else(|| CliError::Episodes(episodes::EpisodeError::Corrupt("episode_id not found in index".into())))?;
+
+            let ep = store.load_episode_by_entry(entry)?;
+
+            // Audit appender
+            let mut app = AuditAppender::open(&audit_log)?;
+
+            let attempted = spec::AuditEvent::EpisodeMirrorAttempted(spec::EpisodeMirrorAttempted {
+                schema_version: 1,
+                run_id: spec::RunId(ep.run_id.0.clone()),
+                tick_id: spec::TickId(ep.tick_id.0),
+                ts,
+                episode_id: ep.episode_id,
+                episode_hash: ep.hash.clone(),
+                target: "openmemory".to_string(),
+            });
+            app.append(attempted)?;
+
+            // Build OpenMemory request payload.
+            // Content = title + summary (keeps it readable in OpenMemory dashboards).
+            let mut content = String::new();
+            if !ep.title.trim().is_empty() {
+                content.push_str(ep.title.trim());
+                content.push_str("\n\n");
+            }
+            content.push_str(ep.summary.trim());
+
+            // Metadata: keep it tight and explicit.
+            let meta: JsonValue = json!({
+                "source": "pieBot",
+                "episode_id": ep.episode_id,
+                "episode_hash": ep.hash,
+                "run_id": ep.run_id,
+                "tick_id": ep.tick_id,
+                "thread_id": ep.thread_id,
+                "tags": ep.tags,
+                "created_ts": ep.created_ts,
+            });
+
+            // Match local-agent-core behavior: OPENMEMORY_API_KEY or OM_API_KEY
+            let key = api_key.or_else(|| {
+                std::env::var("OPENMEMORY_API_KEY")
+                    .ok()
+                    .or_else(|| std::env::var("OM_API_KEY").ok())
+            });
+
+            // No key? Make it explicit (without leaking secrets).
+            if key.is_none() {
+                eprintln!("openmemory: no api key found (set OPENMEMORY_API_KEY or OM_API_KEY, or pass --api-key)");
+            }
+            let om_user_id = user_id.or_else(|| Some(ep.thread_id.clone()));
+
+            let client = om::OpenMemoryClient::new(base_url, key, timeout_ms)?;
+
+
+            let req = om::AddMemoryRequest {
+                content,
+                tags: ep.tags.clone(),
+                metadata: Some(meta),
+                user_id: om_user_id,
+            };
+
+            match client.add_memory(&req).await {
+                Ok(resp) => {
+                    let mirrored = spec::AuditEvent::EpisodeMirrored(spec::EpisodeMirrored {
+                        schema_version: 1,
+                        run_id: spec::RunId(ep.run_id.0.clone()),
+                        tick_id: spec::TickId(ep.tick_id.0),
+                        ts,
+                        episode_id: ep.episode_id,
+                        episode_hash: ep.hash.clone(),
+                        target: "openmemory".to_string(),
+                        remote_id: resp.id.clone(),
+                    });
+                    app.append(mirrored)?;
+
+                    println!("{}", serde_json::to_string(&json!({
+                        "episode_id": ep.episode_id.to_string(),
+                        "episode_hash": ep.hash,
+                        "target": "openmemory",
+                        "remote_id": resp.id,
+                        "primary_sector": resp.primary_sector,
+                        "sectors": resp.sectors
+                    }))?);
+                    Ok(())
+                }
+                Err(e) => {
+                    let failed = spec::AuditEvent::EpisodeMirrorFailed(spec::EpisodeMirrorFailed {
+                        schema_version: 1,
+                        run_id: spec::RunId(ep.run_id.0.clone()),
+                        tick_id: spec::TickId(ep.tick_id.0),
+                        ts,
+                        episode_id: ep.episode_id,
+                        episode_hash: ep.hash.clone(),
+                        target: "openmemory".to_string(),
+                        error: e.to_string(),
+                    });
+                    app.append(failed)?;
+
+                    println!("{}", serde_json::to_string(&json!({
+                        "episode_id": ep.episode_id.to_string(),
+                        "episode_hash": ep.hash,
+                        "target": "openmemory",
+                        "status": "Error",
+                        "error": e.to_string()
+                    }))?);
+                    Ok(())
+                }
+            }
+        }
+        
     }
 }
 

@@ -6,6 +6,7 @@
 //! - ModelRequestRedacted
 //! - ModelCallDispatched
 //! - ModelCallCompleted
+//! NOTE: schema_version increments are per-event, not global.
 
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
@@ -175,6 +176,9 @@ pub enum AuditEvent {
     ModelCallDispatched(ModelCallDispatched),
     ModelCallCompleted(ModelCallCompleted),
     EpisodeAppended(EpisodeAppended),
+    EpisodeMirrorAttempted(EpisodeMirrorAttempted),
+    EpisodeMirrored(EpisodeMirrored),
+    EpisodeMirrorFailed(EpisodeMirrorFailed),
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -191,4 +195,39 @@ pub struct EpisodeAppended {
     pub episode_hash: String,
     /// Reference to the episode artifact bytes as stored/hashed
     pub episode_artifact: ArtifactRef,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct EpisodeMirrorAttempted {
+    pub schema_version: u8,
+    pub run_id: RunId,
+    pub tick_id: TickId,
+    pub ts: f64,
+    pub episode_id: Uuid,
+    pub episode_hash: String,
+    pub target: String, // e.g. "openmemory"
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct EpisodeMirrored {
+    pub schema_version: u8,
+    pub run_id: RunId,
+    pub tick_id: TickId,
+    pub ts: f64,
+    pub episode_id: Uuid,
+    pub episode_hash: String,
+    pub target: String,    // e.g. "openmemory"
+    pub remote_id: String, // returned by OpenMemory
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct EpisodeMirrorFailed {
+    pub schema_version: u8,
+    pub run_id: RunId,
+    pub tick_id: TickId,
+    pub ts: f64,
+    pub episode_id: Uuid,
+    pub episode_hash: String,
+    pub target: String,
+    pub error: String,
 }

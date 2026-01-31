@@ -22,6 +22,7 @@ pie_audit_spec = { path = "../audit_spec" }
 pie_common = { path = "../common" }
 pie_providers = { path = "../providers" }
 pie_episodes = { path = "../episodes" }
+pie_openmemory_mirror = { path = "../openmemory_mirror" }
 
 [dev-dependencies]
 assert_cmd = "2"

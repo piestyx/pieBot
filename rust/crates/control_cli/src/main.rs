@@ -5,6 +5,7 @@ use pie_common::sha256_bytes;
 use pie_redaction::{ModelRequest, RedactionEngine, RedactionProfile, SanitizedModelRequest, CallManifest};
 use pie_audit_spec as spec;
 use pie_providers::{OpenAICompatProvider, Provider};
+use pie_episodes as episodes;
 use std::time::Instant;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -25,6 +26,8 @@ enum CliError {
     Audit(#[from] pie_audit_log::AuditLogError),
     #[error("provider error: {0}")]
     Provider(#[from] pie_providers::ProviderError),
+    #[error("episodes error: {0}")]
+    Episodes(#[from] episodes::EpisodeError),
 }
 
 #[derive(Parser)]
@@ -32,6 +35,34 @@ enum CliError {
 struct Args {
     #[command(subcommand)]
     cmd: Command,
+}
+
+#[derive(Debug, serde::Deserialize)]
+struct EpisodeAppendRequest {
+    schema_version: u8,
+    run_id: String,
+    tick_id: u64,
+    #[serde(default = "default_thread")]
+    thread_id: String,
+    #[serde(default)]
+    tags: Vec<String>,
+    title: String,
+    summary: String,
+    #[serde(default)]
+    artifacts: Vec<EpisodeAppendArtifact>,
+    #[serde(default)]
+    created_ts: f64,
+}
+
+#[derive(Debug, serde::Deserialize)]
+struct EpisodeAppendArtifact {
+    hash: String,
+    #[serde(default)]
+    kind: Option<String>,
+}
+
+fn default_thread() -> String {
+    "main".to_string()
 }
 
 #[derive(Subcommand)]
@@ -144,6 +175,31 @@ enum Command {
         ts_completed: f64,
     },
 
+    /// Append a deterministic episode to runtime/memory/episodes and emit an audit event.
+    ///
+    /// Writes:
+    /// - runtime/memory/episodes/episodes.jsonl (append-only)
+    /// - runtime/memory/episodes/index.json (canonical rewrite)
+    ///
+    /// Appends audit:
+    /// - EpisodeAppended
+    EpisodeAppend {
+        #[arg(long)]
+        repo_root: PathBuf,
+
+        /// JSON request describing the episode content
+        #[arg(long)]
+        request_json: PathBuf,
+
+        /// Audit log JSONL path to append to
+        #[arg(long)]
+        audit_log: PathBuf,
+
+        /// Timestamp for EpisodeAppended
+        #[arg(long, default_value_t = 0.0)]
+        ts: f64,
+    },
+
     /// Verify a hash-chained audit log JSONL and print final hash.
     VerifyAudit {
         #[arg(long)]
@@ -234,6 +290,71 @@ async fn run() -> Result<(), CliError> {
             );
             Ok(())
         }
+
+        Command::EpisodeAppend { repo_root, request_json, audit_log, ts } => {
+            // Load repo_root/.env if present (local-only secrets; not required for episodes but keeps behavior consistent)
+            let repo_env = repo_root.join(".env");
+            if repo_env.exists() {
+                let _ = dotenv_from_path(&repo_env);
+                eprintln!("loaded env from {}", repo_env.display());
+            } else if Path::new(".env").exists() {
+                let _ = dotenv_from_path(".env");
+                eprintln!("loaded env from ./.env");
+            }
+
+            let bytes = fs::read(&request_json)?;
+            let req: EpisodeAppendRequest = serde_json::from_slice(&bytes)?;
+            if req.schema_version != 1 {
+                return Err(CliError::Episodes(episodes::EpisodeError::Corrupt(format!(
+                    "unsupported EpisodeAppendRequest schema_version {}",
+                    req.schema_version
+                ))));
+            }
+
+            let artifacts: Vec<episodes::ArtifactRef> = req
+                .artifacts
+                .into_iter()
+                .map(|a| episodes::ArtifactRef { hash: a.hash, kind: a.kind })
+                .collect();
+
+            let ep = episodes::Episode::new(
+                episodes::RunId(req.run_id.clone()),
+                episodes::TickId(req.tick_id),
+                req.thread_id.clone(),
+                req.tags.clone(),
+                req.title.clone(),
+                req.summary.clone(),
+                artifacts,
+                req.created_ts,
+            )?;
+
+            // Append to authoritative store
+            let store = episodes::EpisodeStore::new(repo_root.clone());
+            store.append(&ep)?;
+
+            // Emit audit event
+            let mut audit = AuditAppender::open(&audit_log)?;
+            let evt = spec::AuditEvent::EpisodeAppended(spec::EpisodeAppended {
+                schema_version: 1,
+                run_id: spec::RunId(req.run_id),
+                tick_id: spec::TickId(req.tick_id),
+                ts,
+                episode_id: ep.episode_id,
+                thread_id: ep.thread_id.clone(),
+                tags: ep.tags.clone(),
+                title: ep.title.clone(),
+                episode_hash: ep.hash.clone(),
+                episode_artifact: spec::ArtifactRef { r#type: "artifact_ref".into(), hash: ep.hash.clone() },
+            });
+            audit.append(evt)?;
+
+            println!(
+                "{{\"episode_id\":\"{}\",\"episode_hash\":\"{}\"}}",
+                ep.episode_id, ep.hash
+            );
+            Ok(())
+        }        
+
         Command::DispatchDir {
             repo_root,
             call_dir,

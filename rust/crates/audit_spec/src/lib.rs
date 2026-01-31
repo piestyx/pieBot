@@ -23,6 +23,12 @@ pub struct TickId(pub u64);
 pub struct CallId(pub Uuid);
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ArtifactRef {
+    pub r#type: String, // "artifact_ref"
+    pub hash: String,   // sha256:...
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum AgentRole {
     Planner,
@@ -72,12 +78,6 @@ pub struct ModelCallMeta {
     pub role: AgentRole,
     pub provider: String,
     pub model: String,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ArtifactRef {
-    pub r#type: String, // "artifact_ref"
-    pub hash: String,   // sha256:...
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -174,4 +174,21 @@ pub enum AuditEvent {
     ModelRequestRedacted(ModelRequestRedacted),
     ModelCallDispatched(ModelCallDispatched),
     ModelCallCompleted(ModelCallCompleted),
+    EpisodeAppended(EpisodeAppended),
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct EpisodeAppended {
+    pub schema_version: u8,
+    pub run_id: RunId,
+    pub tick_id: TickId,
+    pub ts: f64,
+    pub episode_id: Uuid,
+    pub thread_id: String,
+    pub tags: Vec<String>,
+    pub title: String,
+    /// Hash of the episode (sha256 of canonical JSON excluding hash field)
+    pub episode_hash: String,
+    /// Reference to the episode artifact bytes as stored/hashed
+    pub episode_artifact: ArtifactRef,
 }

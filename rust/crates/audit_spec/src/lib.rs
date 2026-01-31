@@ -6,6 +6,7 @@
 //! - ModelRequestRedacted
 //! - ModelCallDispatched
 //! - ModelCallCompleted
+//! - OpenMemory query events
 //! NOTE: schema_version increments are per-event, not global.
 
 use serde::{Deserialize, Serialize};
@@ -179,6 +180,8 @@ pub enum AuditEvent {
     EpisodeMirrorAttempted(EpisodeMirrorAttempted),
     EpisodeMirrored(EpisodeMirrored),
     EpisodeMirrorFailed(EpisodeMirrorFailed),
+    EpisodeQueryPerformed(EpisodeQueryPerformed),
+    EpisodeQueryFailed(EpisodeQueryFailed),
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -229,5 +232,37 @@ pub struct EpisodeMirrorFailed {
     pub episode_id: Uuid,
     pub episode_hash: String,
     pub target: String,
+    pub error: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct EpisodeQueryPerformed {
+    pub schema_version: u8,
+    pub run_id: RunId,
+    pub tick_id: TickId,
+    pub ts: f64,
+    pub target: String,         // "openmemory"
+    pub query_hash: String,     // sha256:... of UTF-8 query bytes
+    pub query_len: u64,
+    pub k: u32,
+    pub user_id: Option<String>,
+    pub alias: Option<String>,
+    pub result_count: u32,
+    pub response_hash: String,  // sha256:... (canonical json)
+    pub response_artifact: ArtifactRef,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct EpisodeQueryFailed {
+    pub schema_version: u8,
+    pub run_id: RunId,
+    pub tick_id: TickId,
+    pub ts: f64,
+    pub target: String,
+    pub query_hash: String,
+    pub query_len: u64,
+    pub k: u32,
+    pub user_id: Option<String>,
+    pub alias: Option<String>,
     pub error: String,
 }

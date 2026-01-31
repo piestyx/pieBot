@@ -282,6 +282,51 @@ enum Command {
         #[arg(long, default_value_t = 0.0)]
         ts: f64,
     },
+    /// Query OpenMemory (/memory/query) and return reference-only results (no raw content).
+    EpisodeQueryRemote {
+        #[arg(long)]
+        repo_root: std::path::PathBuf,
+
+        /// Query text (will be hashed in audit; not stored verbatim).
+        #[arg(long)]
+        query: String,
+
+        /// Top-K results.
+        #[arg(long, default_value_t = 5)]
+        k: u32,
+
+        /// Optional OpenMemory user_id filter.
+        #[arg(long)]
+        user_id: Option<String>,
+
+        /// Optional minimum similarity score (0-1). Server may ignore depending on deployment.
+        #[arg(long)]
+        min_score: Option<f64>,
+
+        /// Base URL of OpenMemory backend.
+        #[arg(long, default_value = "http://127.0.0.1:8080")]
+        base_url: String,
+
+        /// Audit log path.
+        #[arg(long)]
+        audit_log: std::path::PathBuf,
+
+        /// Optional run_id for audit (defaults to run_demo).
+        #[arg(long, default_value = "run_demo")]
+        run_id: String,
+
+        /// Optional tick_id for audit (defaults to 0).
+        #[arg(long, default_value_t = 0)]
+        tick_id: u64,
+
+        /// Timestamp for audit events.
+        #[arg(long, default_value_t = 0.0)]
+        ts: f64,
+
+        /// Request timeout in ms.
+        #[arg(long, default_value_t = 10_000)]
+        timeout_ms: u64,
+    },    
 }
 
 #[tokio::main]
@@ -858,6 +903,134 @@ async fn run() -> Result<(), CliError> {
                         "status": "Error",
                         "error": e.to_string()
                     }))?);
+                    Ok(())
+                }
+            }
+        }
+        
+        Command::EpisodeQueryRemote {
+            repo_root,
+            query,
+            k,
+            user_id,
+            min_score,
+            base_url,
+            audit_log,
+            run_id,
+            tick_id,
+            ts,
+            timeout_ms,
+        } => {
+            // Load .env (repo root first, then cwd) exactly like other commands.
+            let repo_env = repo_root.join(".env");
+            if repo_env.exists() {
+                let _ = dotenv_from_path(&repo_env);
+                eprintln!("loaded env from {}", repo_env.display());
+            } else if std::path::Path::new(".env").exists() {
+                let _ = dotenv_from_path(".env");
+                eprintln!("loaded env from ./.env");
+            }
+
+            // Key resolution matches local-agent-core behavior:
+            // OPENMEMORY_API_KEY or OM_API_KEY.
+            let api_key = std::env::var("OPENMEMORY_API_KEY")
+                .ok()
+                .or_else(|| std::env::var("OM_API_KEY").ok());
+
+            let client = pie_openmemory_mirror::OpenMemoryClient::new(base_url, api_key, timeout_ms)?;
+
+            let req = pie_openmemory_mirror::QueryMemoryRequest {
+                query: query.clone(),
+                k: Some(k),
+                user_id: user_id.clone(),
+                min_score,
+            };
+            // Audit appender
+            let mut app = AuditAppender::open(&audit_log)?;
+            let rid = pie_audit_spec::RunId(run_id);
+            let tid = pie_audit_spec::TickId(tick_id);
+
+            // Hash query for audit (never store verbatim in log)
+            let q_hash = sha256_bytes(query.as_bytes());
+            let q_len = query.as_bytes().len() as u64;
+
+            match client.query_memory(&req).await {
+                Ok(parsed) => {
+                    // Store raw response as artifact (hash-addressed)
+                    let call_id = Uuid::new_v4().to_string();
+                    let rel_dir = std::path::PathBuf::from("runtime")
+                        .join("artifacts")
+                        .join("memory")
+                        .join("openmemory_queries")
+                        .join(&call_id);
+                    let out_dir = repo_root.join(&rel_dir);
+                    std::fs::create_dir_all(&out_dir)?;
+
+                    let raw_bytes = pie_common::canonical_json_bytes(&parsed.raw)?;
+                    let resp_hash = sha256_bytes(&raw_bytes);
+                    let resp_path = out_dir.join("response.json");
+                    std::fs::write(&resp_path, &raw_bytes)?;
+
+                    let art = pie_audit_spec::ArtifactRef {
+                        r#type: "artifact_ref".to_string(),
+                        hash: resp_hash.clone(),
+                    };
+
+                    let ev = pie_audit_spec::AuditEvent::EpisodeQueryPerformed(pie_audit_spec::EpisodeQueryPerformed {
+                        schema_version: 1,
+                        run_id: rid,
+                        tick_id: tid,
+                        ts,
+                        target: "openmemory".to_string(),
+                        query_hash: q_hash.clone(),
+                        query_len: q_len,
+                        k,
+                        user_id,
+                        alias: None,
+                        result_count: parsed.hits.len() as u32,
+                        response_hash: resp_hash.clone(),
+                        response_artifact: art,
+                    });
+                    app.append(ev)?;
+
+                    // Print refs only: id + score + content_hash
+                    let safe = serde_json::json!({
+                        "target": "openmemory",
+                        "query_hash": q_hash,
+                        "k": k,
+                        "result_count": parsed.hits.len(),
+                        "response_hash": resp_hash,
+                        "hits": parsed.hits.iter().map(|h| serde_json::json!({
+                            "id": h.id,
+                            "score": h.score,
+                            "content_hash": h.content_hash,
+                        })).collect::<Vec<_>>(),
+                    });
+                    println!("{}", serde_json::to_string(&safe)?);
+                    Ok(())
+                }
+                Err(e) => {
+                    let ev = pie_audit_spec::AuditEvent::EpisodeQueryFailed(pie_audit_spec::EpisodeQueryFailed {
+                        schema_version: 1,
+                        run_id: rid,
+                        tick_id: tid,
+                        ts,
+                        target: "openmemory".to_string(),
+                        query_hash: q_hash,
+                        query_len: q_len,
+                        k,
+                        user_id,
+                        alias: None,
+                        error: e.to_string(),
+                    });
+                    app.append(ev)?;
+
+                    let out = serde_json::json!({
+                        "target": "openmemory",
+                        "status": "Error",
+                        "error": e.to_string(),
+                    });
+                    println!("{}", serde_json::to_string(&out)?);
                     Ok(())
                 }
             }

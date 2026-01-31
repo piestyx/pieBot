@@ -1,6 +1,11 @@
 # --- Generated runtime ---
 runtime/
 
+# --- Environment files ---
+.env
+.env.*
+!.env.example
+
 # --- Python ---
 __pycache__/
 *.pyc

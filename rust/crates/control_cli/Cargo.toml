@@ -13,6 +13,7 @@ serde_json = "1"
 thiserror = "1"
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "time"] }
 uuid = { version = "1", features = ["v4"] }
+dotenvy = "0.15"
 
 pie_redaction = { path = "../redaction" }
 pie_audit_log = { path = "../audit_log" }

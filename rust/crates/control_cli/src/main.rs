@@ -1,4 +1,5 @@
 use clap::{Parser, Subcommand};
+use dotenvy::from_path as dotenv_from_path;
 use pie_audit_log::{verify_log, AuditAppender};
 use pie_common::sha256_bytes;
 use pie_redaction::{ModelRequest, RedactionEngine, RedactionProfile, SanitizedModelRequest, CallManifest};
@@ -178,6 +179,19 @@ async fn run() -> Result<(), CliError> {
             ts_prepared,
             ts_redacted,
         } => {
+
+            // Load .env from repo root or CWD (best-effort, but visible)
+            let repo_env = repo_root.join(".env");
+            if repo_env.exists() {
+                let _ = dotenv_from_path(&repo_env);
+                eprintln!("loaded env from {}", repo_env.display());
+            } else if Path::new(".env").exists() {
+                let _ = dotenv_from_path(".env");
+                eprintln!("loaded env from ./.env");
+            } else {
+                eprintln!("no .env file found (expected at {} or CWD)", repo_env.display());
+            }
+
             ensure_runtime_dirs(&repo_root)?;
 
             let bytes = fs::read(&request_json)?;
@@ -229,6 +243,19 @@ async fn run() -> Result<(), CliError> {
             ts_dispatched,
             ts_completed,
         } => {
+
+            // Load .env from repo root or CWD (best-effort, but visible)
+            let repo_env = repo_root.join(".env");
+            if repo_env.exists() {
+                let _ = dotenv_from_path(&repo_env);
+                eprintln!("loaded env from {}", repo_env.display());
+            } else if Path::new(".env").exists() {
+                let _ = dotenv_from_path(".env");
+                eprintln!("loaded env from ./.env");
+            } else {
+                eprintln!("no .env file found (expected at {} or CWD)", repo_env.display());
+            }
+
             ensure_runtime_dirs(&repo_root)?;
             let manifest_path = call_dir.join("call_manifest.json");
             let post_path = call_dir.join("request_post.json");
@@ -242,6 +269,15 @@ async fn run() -> Result<(), CliError> {
                 .or_else(|| std::env::var("PIEBOT_PROVIDER_BASE_URL").ok())
                 .unwrap_or_else(|| "https://api.openai.com".to_string());
             let api_key = api_key.or_else(|| std::env::var("PIEBOT_PROVIDER_API_KEY").ok());
+
+            // Helpful guardrail: if you're pointing at OpenAI and no API key is set, fail loudly.
+            if api_key.as_deref().unwrap_or("").is_empty()
+                && base_url.contains("api.openai.com")
+            {
+                return Err(CliError::Provider(pie_providers::ProviderError::InvalidResponse(
+                    "PIEBOT_PROVIDER_API_KEY is required for https://api.openai.com (set it in .env or env var)".into(),
+                )));
+            }
 
             let bytes = fs::read(&post_path)?;
             let req: SanitizedModelRequest = serde_json::from_slice(&bytes)?;

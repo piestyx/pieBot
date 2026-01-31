@@ -10,6 +10,7 @@ from pathlib import Path
 RUNTIME_DIRS = [
     "runtime/state",
     "runtime/memory",
+    "runtime/memory/episodes",
     "runtime/logs",
     "runtime/artifacts",
     "runtime/artifacts/diffs",

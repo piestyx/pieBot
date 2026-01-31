@@ -1,5 +1,6 @@
 use clap::{Parser, Subcommand};
 use dotenvy::from_path as dotenv_from_path;
+use serde_json::json;
 use pie_audit_log::{verify_log, AuditAppender};
 use pie_common::sha256_bytes;
 use pie_redaction::{ModelRequest, RedactionEngine, RedactionProfile, SanitizedModelRequest, CallManifest};
@@ -200,6 +201,46 @@ enum Command {
         ts: f64,
     },
 
+    /// Query the deterministic episode index in runtime/memory/episodes.
+    ///
+    /// Filters:
+    /// - optional thread_id
+    /// - tags must include all provided --tag values
+    /// - optional since_tick (inclusive)
+    /// - limit
+    ///
+    /// Output:
+    /// - JSON array of index entries sorted deterministically
+    EpisodeQuery {
+        #[arg(long)]
+        repo_root: PathBuf,
+
+        #[arg(long)]
+        thread_id: Option<String>,
+
+        /// Provide multiple times: --tag role:planner --tag status:ok
+        #[arg(long = "tag")]
+        tags: Vec<String>,
+
+        #[arg(long)]
+        since_tick: Option<u64>,
+
+        #[arg(long, default_value_t = 20)]
+        limit: usize,
+    },
+
+    /// Load a full episode by episode_id (verifies hash + index).
+    ///
+    /// Output:
+    /// - full Episode JSON (as stored), including `hash`
+    EpisodeGet {
+        #[arg(long)]
+        repo_root: PathBuf,
+
+        #[arg(long)]
+        episode_id: String,
+    },
+
     /// Verify a hash-chained audit log JSONL and print final hash.
     VerifyAudit {
         #[arg(long)]
@@ -352,6 +393,53 @@ async fn run() -> Result<(), CliError> {
                 "{{\"episode_id\":\"{}\",\"episode_hash\":\"{}\"}}",
                 ep.episode_id, ep.hash
             );
+            Ok(())
+        }      
+        
+        Command::EpisodeQuery { repo_root, thread_id, tags, since_tick, limit } => {
+            let store = episodes::EpisodeStore::new(repo_root);
+            let since = since_tick.map(episodes::TickId);
+            let results = store.query(thread_id.as_deref(), &tags, since, limit)?;
+
+            // Print stable JSON array (no pretty print; callers can jq if needed).
+            // Fields chosen match EpisodeIndexEntry.
+            let out = results
+                .into_iter()
+                .map(|e| {
+                    json!({
+                        "episode_id": e.episode_id.to_string(),
+                        "run_id": e.run_id.0,
+                        "tick_id": e.tick_id.0,
+                        "thread_id": e.thread_id,
+                        "tags": e.tags,
+                        "hash": e.hash,
+                        "line_no": e.line_no
+                    })
+                })
+                .collect::<Vec<_>>();
+
+            println!("{}", serde_json::to_string(&out)?);
+            Ok(())
+        }
+
+        Command::EpisodeGet { repo_root, episode_id } => {
+            let store = episodes::EpisodeStore::new(repo_root);
+            let idx = store.load_index()?;
+
+            let uid = Uuid::parse_str(&episode_id)
+                .map_err(|_| CliError::Episodes(episodes::EpisodeError::Corrupt("invalid episode_id".into())))?;
+
+            let entry = idx
+                .entries
+                .iter()
+                .find(|e| e.episode_id == uid)
+                .ok_or_else(|| CliError::Episodes(episodes::EpisodeError::Corrupt("episode_id not found in index".into())))?;
+
+            let ep = store.load_episode_by_entry(entry)?;
+
+            // Print full episode JSON as stored (includes hash).
+            // No pretty print; deterministic pipelines can hash canonical bytes separately.
+            println!("{}", serde_json::to_string(&ep)?);
             Ok(())
         }        
 

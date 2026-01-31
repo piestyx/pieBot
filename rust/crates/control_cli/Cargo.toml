@@ -22,3 +22,8 @@ pie_audit_spec = { path = "../audit_spec" }
 pie_common = { path = "../common" }
 pie_providers = { path = "../providers" }
 pie_episodes = { path = "../episodes" }
+
+[dev-dependencies]
+assert_cmd = "2"
+predicates = "3"
+tempfile = "3"

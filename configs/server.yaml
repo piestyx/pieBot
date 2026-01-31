@@ -1,3 +1,9 @@
 # Server Configuration File for pieBot
 # This configuration file defines the server settings for the pieBot application.
 
+openmemory:
+  enabled: false
+  base_url: "http://127.0.0.1:8080"
+  dashboard_url: "http://127.0.0.1:3000"
+  timeout_ms: 2000
+  mirror_on_append: false
